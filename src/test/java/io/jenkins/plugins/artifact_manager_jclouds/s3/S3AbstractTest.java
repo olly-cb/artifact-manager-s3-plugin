@@ -32,6 +32,12 @@ import java.time.format.DateTimeFormatter;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
+import com.amazonaws.auth.AWSCredentials;
+import com.cloudbees.jenkins.plugins.awscredentials.AWSCredentialsImpl;
+import com.cloudbees.plugins.credentials.CredentialsProvider;
+import com.cloudbees.plugins.credentials.CredentialsScope;
+import com.cloudbees.plugins.credentials.domains.Domain;
+import jenkins.model.Jenkins;
 import org.apache.commons.lang.RandomStringUtils;
 import org.jclouds.blobstore.BlobStore;
 import org.jclouds.blobstore.BlobStoreContext;
@@ -63,12 +69,13 @@ public abstract class S3AbstractTest {
     private static final String S3_REGION = System.getenv("S3_REGION");
 
     protected BlobStoreProvider provider;
+    static AWSCredentialsProvider ssoEnabledCredentialsProvider;
 
     @BeforeClass
     public static void live() {
         assumeThat("define $S3_BUCKET as explained in README", S3_BUCKET, notNullValue());
         assumeThat("define $S3_DIR as explained in README", S3_DIR, notNullValue());
-        AWSCredentialsProvider ssoEnabledCredentialsProvider = new AWSCredentialsProviderChain(DefaultAWSCredentialsProviderChain.getInstance(), new V2ProfileCredentialsProvider());
+        ssoEnabledCredentialsProvider = new AWSCredentialsProviderChain(DefaultAWSCredentialsProviderChain.getInstance(), new V2ProfileCredentialsProvider());
         S3BlobStoreConfig.clientBuilder = () -> AmazonS3ClientBuilder.standard().withCredentials(ssoEnabledCredentialsProvider);
         try {
             AmazonS3ClientBuilder builder = S3BlobStoreConfig.clientBuilder.get();
@@ -117,7 +124,15 @@ public abstract class S3AbstractTest {
         config.setContainer(S3_BUCKET);
         CredentialsAwsGlobalConfiguration credentialsConfig = CredentialsAwsGlobalConfiguration.get();
         credentialsConfig.setRegion(S3_REGION);
-
+        if(CredentialsAwsGlobalConfiguration.get().getCredentials() == null) {
+            AWSCredentials awsCredentials = ssoEnabledCredentialsProvider.getCredentials();
+            CredentialsProvider.lookupStores(Jenkins.get())
+                    .iterator()
+                    .next()
+                    .addCredentials(Domain.global(), new AWSCredentialsImpl(CredentialsScope.GLOBAL, S3AbstractTest.class.getName(),
+                            awsCredentials.getAWSAccessKeyId(), awsCredentials.getAWSSecretKey(), S3AbstractTest.class.getName()));
+            credentialsConfig.setCredentialsId(S3AbstractTest.class.getName());
+        }
         loggerRule.recordPackage(JCloudsVirtualFile.class, Level.FINE);
 
         // run each test under its own dir
